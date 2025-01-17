@@ -1,11 +1,31 @@
-List what Kind clusters are running currently
+# Fetch Host PIDs for Processes in Kind Cluster
 
-```console
-$ kind get clusters
-contour
+## Introduction
+
+This Python script identifies the host PID for a process running inside a container in a Kind cluster.
+It uses `docker exec` to run `crictl` on the Kind node to list the Pods and containers running on the node.
+It then utilizes `/sys/fs/cgroup/` to find the host PIDs and `/proc/` to retrieve process details.
+
+
+## Usage
+
+```
+usage: kind-ps.py [-h] [--debug] docker_filter [pod_filter]
+
+Get host PIDs for processes within a Kind cluster
+
+positional arguments:
+  docker_filter  Filter to include specific Kind Docker containers
+  pod_filter     Optional filter to include specific Pods
+
+options:
+  -h, --help     show this help message and exit
+  --debug        Activate debug logging
 ```
 
-List nodes that the cluster has
+## Example
+
+First, list the nodes in the Kind cluster:
 
 ```console
 $ kubectl get nodes
@@ -14,84 +34,97 @@ contour-control-plane   Ready    control-plane   11h   v1.32.0
 contour-worker          Ready    <none>          11h   v1.32.0
 ```
 
-These reflect the docker containers that are running
+These nodes correspond to the Docker containers that are running:
 
 ```console
 $ docker ps
 CONTAINER ID   IMAGE                  COMMAND                  CREATED        STATUS        PORTS                                              NAMES
-992ec6ccbeed   kindest/node:v1.32.0   "/usr/local/bin/entr…"   11 hours ago   Up 11 hours   127.0.0.1:36409->6443/tcp                          contour-control-plane
-22c9d82b69f2   kindest/node:v1.32.0   "/usr/local/bin/entr…"   11 hours ago   Up 11 hours   127.0.0.101:80->80/tcp, 127.0.0.101:443->443/tcp   contour-worker
+992ec6ccbeed   kindest/node:v1.32.0   "/usr/local/bin/entr…"   15 hours ago   Up 15 hours   127.0.0.1:36409->6443/tcp                          contour-control-plane
+22c9d82b69f2   kindest/node:v1.32.0   "/usr/local/bin/entr…"   15 hours ago   Up 15 hours   127.0.0.101:80->80/tcp, 127.0.0.101:443->443/tcp   contour-worker
 ```
 
-List the pods that are running in `contour-worker` container
+To list the pods that match `contour` and are running on the `contour-worker` node, run:
 
 ```console
-$ ./kind-ps.py contour-worker contour
+$ ./kind-ps.py contour-worker envoy
 ```
 
-Result is JSON document
+Result is a JSON document
 
 ```json
-{
-  "contour-worker": [
-    {
-      "name": "contour",
-      "image": {
-        "tags": [
-          [
-            "ghcr.io/projectcontour/contour:v1.30.2"
-          ]
-        ]
-      },
-      "state": "CONTAINER_RUNNING",
-      "created": "2025-01-17T10:32:45.674421",
-      "pids": [
-        {
-          "pid": "1345826",
-          "cmd": "contour serve --incluster --xds-address=0.0.0.0 --xds-port=8001 --contour-cafile=/certs/ca.crt --contour-cert-file=/certs/tls.crt --contour-key-file=/certs/tls.key --config-path=/config/contour.yaml "
-        }
+[
+  {
+    "node": "contour-worker",
+    "pod": "envoy-hgf2d",
+    "container": "envoy",
+    "image": {
+      "tags": [
+        "docker.io/envoyproxy/envoy:v1.31.5"
       ]
     },
-    {
-      "name": "contour",
-      "image": {
-        "tags": [
-          [
-            "ghcr.io/projectcontour/contour:v1.30.2"
-          ]
-        ]
-      },
-      "state": "CONTAINER_RUNNING",
-      "created": "2025-01-17T10:32:24.069099",
-      "pids": [
-        {
-          "pid": "1344974",
-          "cmd": "contour serve --incluster --xds-address=0.0.0.0 --xds-port=8001 --contour-cafile=/certs/ca.crt --contour-cert-file=/certs/tls.crt --contour-key-file=/certs/tls.key --config-path=/config/contour.yaml "
-        }
-      ]
+    "created": "2025-01-17T09:01:26.668859",
+    "pids": [
+      {
+        "pid": "1123824",
+        "cmd": "envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-hgf2d --log-level info"
+      }
+    ],
+    "labels": {
+      "app": "envoy",
+      "controller-revision-hash": "dd8c68b4b",
+      "pod-template-generation": "1"
     }
-  ]
-}
+  },
+  {
+    "node": "contour-worker",
+    "pod": "envoy-hgf2d",
+    "container": "shutdown-manager",
+    "image": {
+      "tags": []
+    },
+    "created": "2025-01-17T09:01:22.363198",
+    "pids": [
+      {
+        "pid": "1123597",
+        "cmd": "/bin/contour envoy shutdown-manager"
+      }
+    ],
+    "labels": {
+      "app": "envoy",
+      "controller-revision-hash": "dd8c68b4b",
+      "pod-template-generation": "1"
+    }
+  }
+]
 ```
 
-We can see that the PIDs are processes on host
+The PIDs listed are the host PIDs for the processes running inside the container.
+You can use these PIDs to inspect the processes on the host:
 
 ```console
-$ ps 1345826
+$ ps 1123824
     PID TTY      STAT   TIME COMMAND
-1345826 ?        Ssl    0:38 contour serve --incluster --xds-address=0.0.0.0 --xds-port=8001 --contour-cafile=/certs/ca.crt --contour-cert-file=/certs/tls.crt --contour-key-f
+1123824 ?        Ssl   16:50 envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-hgf2d --log-level info
 ```
 
-
-Now we can use the PID to get access to the root filesytem of the container from the host
+Now, you can use the PID to access the root filesystem of the container from the host.
 
 ```console
-$ sudo ls /proc/1345826/root/
-bin  certs  config  dev  etc  proc  product_name  product_uuid  sys  var
+$ sudo ls /proc/1123824/root/
+admin  config                home   libx32  proc          run   tmp
+bin    dev                   lib    media   product_name  sbin  usr
+boot   docker-entrypoint.sh  lib32  mnt     product_uuid  srv   var
+certs  etc                   lib64  opt     root          sys
 ```
 
-Or e.g. send signal to stop the process
+Or you can send signals to the process even if the container does not have the `kill` command:
 
 ```console
-$ sudo kill -STOP 1345826
+$ sudo kill -STOP 1123824
+```
+
+Or you can use `nsenter` to enter the network namespace of the process to run `wireshark`:
+
+```console
+$ sudo nsenter --target $(./kind-ps.py contour-worker envoy | jq -r '.[0].pids[0].pid') --net wireshark -i any -k
 ```
