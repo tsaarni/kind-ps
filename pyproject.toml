@@ -1,0 +1,26 @@
+[build-system]
+requires = ["flit_core"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "kindps"
+readme = "README.md"
+authors = [{name = "Tero Saarni", email = "tero.saarni@gmail.com"}]
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux"
+]
+dynamic = ["version", "description"]
+requires-python = ">=3.9"
+keywords = ["kubernetes", "kind"]
+
+[project.urls]
+Documentation = "https://github.com/tsaarni/kind-ps"
+Source = "https://github.com/tsaarni/kind-ps"
+
+[project.scripts]
+kindps = "kindps:main"
+
+[tool.black]
+line-length = 120

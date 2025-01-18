@@ -13,6 +13,9 @@
 # limitations under the License.
 #
 
+"""Get host PIDs for processes within a Kind cluster"""
+
+import argparse
 import json
 import logging
 import os
@@ -21,8 +24,11 @@ import sys
 from datetime import datetime
 from typing import List
 
+__version__ = "0.0.4"
+
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stderr)],
 )
@@ -54,7 +60,8 @@ def get_docker_containers(filter: str) -> List[dict]:
     for line in result.stdout.splitlines():
         doc = json.loads(line)
         containers.append(doc)
-    logging.debug(f"Found {len(containers)} containers")
+
+    logging.debug(json.dumps(containers))
 
     return containers
 
@@ -81,7 +88,7 @@ def get_cri_containers(container_id: str) -> List[dict]:
     for container in doc["containers"]:
         containers.append(container)
 
-    logging.debug(containers)
+    logging.debug(json.dumps(containers))
 
     return containers
 
@@ -96,7 +103,7 @@ def get_cri_pods(container_id: str, pod_filter: str) -> List[dict]:
         if pod["state"] == "SANDBOX_READY":
             pods.append(pod)
 
-    logging.debug(pods)
+    logging.debug(json.dumps(pods))
 
     return pods
 
@@ -124,17 +131,25 @@ def get_images_on_kind_container(container_id: str) -> dict:
     stdout = exec_in_docker(container_id, ["crictl", "images", "--output", "json"])
 
     doc = json.loads(stdout)
+    logging.debug(json.dumps(doc, separators=(",", ":")))
 
     images = {}
     for image in doc["images"]:
         images[image["id"]] = {
-            "tags": image["repoTags"],
+            "tags": image["repoTags"] + image["repoDigests"],
         }
 
     return images
 
 
-def main(args):
+def main():
+    parser = argparse.ArgumentParser(description="get host PIDs for processes within a Kind cluster")
+    parser.add_argument("docker_filter", help="filter for Kind Docker container names")
+    parser.add_argument("pod_filter", nargs="?", default="", help="optional filter for pod names")
+    parser.add_argument("--debug", action="store_true", help="activate debug logging")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+    args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -154,7 +169,7 @@ def main(args):
                         "node": kind_container["Names"],
                         "pod": pod["metadata"]["name"],
                         "container": pod_container["metadata"]["name"],
-                        "image": images[pod_container["imageRef"]],
+                        "image": images[pod_container["imageRef"]]["tags"][0],
                         "created": datetime.fromtimestamp(int(pod_container["createdAt"]) / 1_000_000_000).isoformat(),
                         "pids": get_host_pids(kind_container["ID"], pod_container["id"]),
                         "labels": {k: v for k, v in pod["labels"].items() if not k.startswith("io.kubernetes.pod.")},
@@ -165,12 +180,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Get host PIDs for processes within a Kind cluster")
-    parser.add_argument("docker_filter", help="Filter to include specific Kind Docker containers")
-    parser.add_argument("pod_filter", nargs="?", default="", help="Optional filter to include specific Pods")
-    parser.add_argument("--debug", action="store_true", help="Activate debug logging")
-
-    args = parser.parse_args()
-    main(args)
+    main()

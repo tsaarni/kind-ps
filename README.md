@@ -1,26 +1,38 @@
-# Fetch Host PIDs for Processes in Kind Cluster
+# Get host PIDs for processes within a Kind cluster
 
 ## Introduction
 
-This Python script identifies the host PID for a process running inside a container in a Kind cluster.
-It uses `docker exec` to run `crictl` on the Kind node to list the Pods and containers running on the node.
-It then utilizes `/sys/fs/cgroup/` to find the host PIDs and `/proc/` to retrieve process details.
+This Python script identifies the host PID for a process running inside a pod in a [Kind](https://kind.sigs.k8s.io/) Kubernetes cluster.
+It uses `docker exec` to run [`crictl`](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) on the Kind node to list the pods and containers running on the node.
+It then navigates through `/sys/fs/cgroup/` and the nested cgroups to find the host PIDs.
+Finally `/proc/` is used to retrieve the process details.
 
+The script requires only Python and does not depend on any external packages.
+Since it directly accesses the `cgroup` and `proc` filesystems, it works only on Linux hosts where `kind` is executed and is not compatible with MacOS.
 
 ## Usage
 
 ```
-usage: kind-ps.py [-h] [--debug] docker_filter [pod_filter]
+usage: kindps [-h] [--debug] [--version] docker_filter [pod_filter]
 
-Get host PIDs for processes within a Kind cluster
+get host PIDs for processes within a Kind cluster
 
 positional arguments:
-  docker_filter  Filter to include specific Kind Docker containers
-  pod_filter     Optional filter to include specific Pods
+  docker_filter  filter which Kind Docker containers are queried
+  pod_filter     optional filter for pods
 
 options:
   -h, --help     show this help message and exit
-  --debug        Activate debug logging
+  --debug        activate debug logging
+  --version      show program's version number and exit
+```
+
+## Installation
+
+The script can either downloaded and executed directly or installed as a Python package
+
+```
+pip install kindps
 ```
 
 ## Example
@@ -37,16 +49,16 @@ contour-worker          Ready    <none>          11h   v1.32.0
 These nodes correspond to the Docker containers that are running:
 
 ```console
-$ docker ps
-CONTAINER ID   IMAGE                  COMMAND                  CREATED        STATUS        PORTS                                              NAMES
-992ec6ccbeed   kindest/node:v1.32.0   "/usr/local/bin/entr…"   15 hours ago   Up 15 hours   127.0.0.1:36409->6443/tcp                          contour-control-plane
-22c9d82b69f2   kindest/node:v1.32.0   "/usr/local/bin/entr…"   15 hours ago   Up 15 hours   127.0.0.101:80->80/tcp, 127.0.0.101:443->443/tcp   contour-worker
+$ docker ps --format "table {{.ID}}\t{{.Names}}"
+CONTAINER ID   NAMES
+992ec6ccbeed   contour-control-plane
+22c9d82b69f2   contour-worker
 ```
 
-To list the pods that match `contour` and are running on the `contour-worker` node, run:
+To list the pods that match `envoy` and are running on the `contour-worker` node, run:
 
 ```console
-$ ./kind-ps.py contour-worker envoy
+$ kindps contour-worker envoy
 ```
 
 Result is a JSON document
@@ -55,18 +67,14 @@ Result is a JSON document
 [
   {
     "node": "contour-worker",
-    "pod": "envoy-hgf2d",
+    "pod": "envoy-z5lp9",
     "container": "envoy",
-    "image": {
-      "tags": [
-        "docker.io/envoyproxy/envoy:v1.31.5"
-      ]
-    },
-    "created": "2025-01-17T09:01:26.668859",
+    "image": "docker.io/envoyproxy/envoy:v1.31.5",
+    "created": "2025-01-18T10:37:07.655928",
     "pids": [
       {
-        "pid": "1123824",
-        "cmd": "envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-hgf2d --log-level info"
+        "pid": "2367787",
+        "cmd": "envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-z5lp9 --log-level info"
       }
     ],
     "labels": {
@@ -77,15 +85,13 @@ Result is a JSON document
   },
   {
     "node": "contour-worker",
-    "pod": "envoy-hgf2d",
+    "pod": "envoy-z5lp9",
     "container": "shutdown-manager",
-    "image": {
-      "tags": []
-    },
-    "created": "2025-01-17T09:01:22.363198",
+    "image": "ghcr.io/projectcontour/contour:v1.30.2",
+    "created": "2025-01-18T10:37:07.511818",
     "pids": [
       {
-        "pid": "1123597",
+        "pid": "2367735",
         "cmd": "/bin/contour envoy shutdown-manager"
       }
     ],
@@ -99,18 +105,18 @@ Result is a JSON document
 ```
 
 The PIDs listed are the host PIDs for the processes running inside the container.
-You can use these PIDs to inspect the processes on the host:
+You can use these PIDs on the host:
 
 ```console
-$ ps 1123824
+$ ps 2367787
     PID TTY      STAT   TIME COMMAND
-1123824 ?        Ssl   16:50 envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-hgf2d --log-level info
+2367787 ?        Ssl    0:00 envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-z5lp9 --log-level info
 ```
 
 Now, you can use the PID to access the root filesystem of the container from the host.
 
 ```console
-$ sudo ls /proc/1123824/root/
+$ sudo ls /proc/2367787/root/
 admin  config                home   libx32  proc          run   tmp
 bin    dev                   lib    media   product_name  sbin  usr
 boot   docker-entrypoint.sh  lib32  mnt     product_uuid  srv   var
@@ -120,11 +126,11 @@ certs  etc                   lib64  opt     root          sys
 Or you can send signals to the process even if the container does not have the `kill` command:
 
 ```console
-$ sudo kill -STOP 1123824
+$ sudo kill -STOP 2367787
 ```
 
 Or you can use `nsenter` to enter the network namespace of the process to run `wireshark`:
 
 ```console
-$ sudo nsenter --target $(./kind-ps.py contour-worker envoy | jq -r '.[0].pids[0].pid') --net wireshark -i any -k
+$ sudo nsenter --target $(kindps contour-worker envoy | jq -r '.[0].pids[0].pid') --net wireshark -i any -k
 ```
