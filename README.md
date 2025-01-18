@@ -1,4 +1,4 @@
-# Get host PIDs for processes within a Kind cluster
+# Find host PIDs for processes in Kind cluster
 
 ## Introduction
 
@@ -13,23 +13,25 @@ Since it directly accesses the `cgroup` and `proc` filesystems, it works only on
 ## Usage
 
 ```
-usage: kindps [-h] [--debug] [--version] docker_filter [pod_filter]
+usage: kindps [-h] [-o {tabular,json}] [--debug] [-v] docker_filter [pod_filter]
 
-get host PIDs for processes within a Kind cluster
+Find host PIDs for processes in Kind cluster
 
 positional arguments:
-  docker_filter  filter which Kind Docker containers are queried
-  pod_filter     optional filter for pods
+  docker_filter         filter for Kind Docker container names
+  pod_filter            optional filter for pod names
 
 options:
-  -h, --help     show this help message and exit
-  --debug        activate debug logging
-  --version      show program's version number and exit
+  -h, --help            show this help message and exit
+  -o {tabular,json}, --output {tabular,json}
+                        output format (default: tabular)
+  --debug               activate debug logging
+  -v, --version         show program's version number and exit
 ```
 
 ## Installation
 
-The script can either downloaded and executed directly or installed as a Python package
+The script can either downloaded and executed directly or installed as a Python package:
 
 ```
 pip install kindps
@@ -55,13 +57,45 @@ CONTAINER ID   NAMES
 22c9d82b69f2   contour-worker
 ```
 
-To list the pods that match `envoy` and are running on the `contour-worker` node, run:
+To list the containers running in pods that contain `envoy` in their names and are running on nodes that contain `contour` in their names, run:
 
 ```console
-$ kindps contour-worker envoy
+$ kindps contour envoy
 ```
 
-Result is a JSON document
+Result is printed in tabular format by default:
+
+```console
+Containers:
+  envoy:
+    Pod:      envoy-z5lp9
+    Node:     contour-worker
+    Process:
+      pid:    2367787
+      cmd:    envoy -c /config/envoy.json --service-cluster projectcontour --service-node
+              envoy-z5lp9 --log-level info
+    Image:    docker.io/envoyproxy/envoy:v1.31.5
+    Created:  2025-01-18T10:37:07.655928
+    Labels:
+      app: envoy
+      controller-revision-hash: dd8c68b4b
+      pod-template-generation: 1
+
+  shutdown-manager:
+    Pod:      envoy-z5lp9
+    Node:     contour-worker
+    Process:
+      pid:    2367735
+      cmd:    /bin/contour envoy shutdown-manager
+    Image:    ghcr.io/projectcontour/contour:v1.30.2
+    Created:  2025-01-18T10:37:07.511818
+    Labels:
+      app: envoy
+      controller-revision-hash: dd8c68b4b
+      pod-template-generation: 1
+```
+
+You can also print it in JSON format by using the `--output json` option:
 
 ```json
 [
@@ -104,13 +138,14 @@ Result is a JSON document
 ]
 ```
 
-The PIDs listed are the host PIDs for the processes running inside the container.
+The PIDs listed are the host PIDs for the processes running inside the containers.
 You can use these PIDs on the host:
 
 ```console
 $ ps 2367787
     PID TTY      STAT   TIME COMMAND
-2367787 ?        Ssl    0:00 envoy -c /config/envoy.json --service-cluster projectcontour --service-node envoy-z5lp9 --log-level info
+2367787 ?        Ssl    0:00 envoy -c /config/envoy.json --service-cluster projectcontour
+                             --service-node envoy-z5lp9 --log-level info
 ```
 
 Now, you can use the PID to access the root filesystem of the container from the host.
@@ -123,7 +158,7 @@ boot   docker-entrypoint.sh  lib32  mnt     product_uuid  srv   var
 certs  etc                   lib64  opt     root          sys
 ```
 
-Or you can send signals to the process even if the container does not have the `kill` command:
+Or you can send signals to the process even if the container would not have the `kill` command:
 
 ```console
 $ sudo kill -STOP 2367787
@@ -132,5 +167,7 @@ $ sudo kill -STOP 2367787
 Or you can use `nsenter` to enter the network namespace of the process to run `wireshark`:
 
 ```console
-$ sudo nsenter --target $(kindps contour-worker envoy | jq -r '.[0].pids[0].pid') --net wireshark -i any -k
+$ sudo nsenter \
+    --target $(kindps contour-worker envoy --output json | jq -r '.[0].pids[0].pid') \
+    --net wireshark -i any -k
 ```

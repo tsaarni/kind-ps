@@ -13,18 +13,20 @@
 # limitations under the License.
 #
 
-"""Get host PIDs for processes within a Kind cluster"""
+"""Find host PIDs for processes in Kind cluster"""
 
 import argparse
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import textwrap
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 
 logging.basicConfig(
@@ -53,7 +55,6 @@ def get_docker_containers(filter: str) -> List[dict]:
     )
 
     if result.returncode != 0:
-        logging.error(f"Command failed ({result.returncode}): {result.stderr}")
         raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=result.stderr)
 
     containers = []
@@ -62,6 +63,9 @@ def get_docker_containers(filter: str) -> List[dict]:
         containers.append(doc)
 
     logging.debug(json.dumps(containers))
+
+    if not containers:
+        raise ValueError(f"No containers found for filter: {filter}")
 
     return containers
 
@@ -73,7 +77,6 @@ def exec_in_docker(container_id: str, command: List[str]) -> str:
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        logging.error(f"Command failed ({result.returncode}): {result.stderr}")
         raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=result.stderr)
 
     return result.stdout
@@ -142,26 +145,78 @@ def get_images_on_kind_container(container_id: str) -> dict:
     return images
 
 
+def tabular_print(processes: List[dict]):
+    if not processes:
+        print("No processes found")
+        return
+
+    terminal_width = shutil.get_terminal_size().columns
+    wrap_width = terminal_width - 16
+
+    print("Containers:")
+
+    print("\n\n".join([tabular_format_container(process, wrap_width) for process in processes]))
+
+
+def tabular_format_processes(pids: List[Dict], wrap_width: int) -> str:
+    processes_str = "\n".join(
+        f"""    Process:
+      pid:    {pid_info["pid"]}
+      cmd:    {textwrap.fill(pid_info["cmd"], width=wrap_width, subsequent_indent=" " * 14)}"""
+        for pid_info in pids
+    )
+    return processes_str
+
+
+def tabular_format_labels(labels: Dict[str, str]) -> str:
+    return "\n".join([f"      {key}: {value}" for key, value in labels.items()])
+
+
+def tabular_format_container(process: Dict, wrap_width: int) -> str:
+    processes_str = tabular_format_processes(process["pids"], wrap_width)
+    labels_str = tabular_format_labels(process["labels"])
+
+    return f"""  {process["container"]}:
+    Pod:      {process["pod"]}
+    Node:     {process["node"]}
+{processes_str}
+    Image:    {process["image"]}
+    Created:  {process["created"]}
+    Labels:
+{labels_str}"""
+
+
 def main():
-    parser = argparse.ArgumentParser(description="get host PIDs for processes within a Kind cluster")
+    parser = argparse.ArgumentParser(description="Find host PIDs for processes in Kind cluster")
     parser.add_argument("docker_filter", help="filter for Kind Docker container names")
     parser.add_argument("pod_filter", nargs="?", default="", help="optional filter for pod names")
+    parser.add_argument(
+        "-o", "--output", choices=["tabular", "json"], default="tabular", help="output format (default: tabular)"
+    )
     parser.add_argument("--debug", action="store_true", help="activate debug logging")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
 
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    kind_containers = get_docker_containers(args.docker_filter)
+    try:
+        kind_containers = get_docker_containers(args.docker_filter)
+    except Exception as e:
+        print(f"Failed to get Kind containers: {e}", file=sys.stderr)
+        sys.exit(1)
 
     processes = []
     for kind_container in kind_containers:
-        images = get_images_on_kind_container(kind_container["ID"])
+        try:
+            images = get_images_on_kind_container(kind_container["ID"])
+            pods = get_cri_pods(kind_container["ID"], args.pod_filter)
+            pod_containers = get_cri_containers(kind_container["ID"])
+        except Exception as e:
+            print(f"Failed to get info from Kind container {kind_container['ID']}: {e}", file=sys.stderr)
+            sys.exit(1)
 
-        pods = get_cri_pods(kind_container["ID"], args.pod_filter)
-        pod_containers = get_cri_containers(kind_container["ID"])
         for pod in pods:
             for pod_container in [c for c in pod_containers if c["podSandboxId"] == pod["id"]]:
                 processes.append(
@@ -176,7 +231,10 @@ def main():
                     }
                 )
 
-    print(json.dumps(processes, indent=2))
+    if args.output == "json":
+        print(json.dumps(processes, indent=2))
+    else:
+        tabular_print(processes)
 
 
 if __name__ == "__main__":
