@@ -30,7 +30,7 @@ options:
 
 ## Installation
 
-Either download [`kindps.py`](kindps.py) or install as a Python package:
+Either download [`kindps.py`](https://raw.githubusercontent.com/tsaarni/kind-ps/refs/heads/main/kindps.py) or install as a Python package from [PyPI](https://pypi.org/project/kindps/):
 
 ```
 pip install kindps
