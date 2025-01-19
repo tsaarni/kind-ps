@@ -3,14 +3,13 @@
 ## Introduction
 
 This Python script identifies the host PID for a process running inside a pod in a [Kind](https://kind.sigs.k8s.io/) Kubernetes cluster.
-It uses `docker exec` to run [`crictl`](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) on the Kind node to list the pods and containers running on the node.
+It uses `docker exec` to execute [`crictl`](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) on the Kind node to list the pods and containers running on the node.
 It then navigates through `/sys/fs/cgroup/` and the nested cgroups to find the host PIDs.
-Finally `/proc/` is used to retrieve the process details.
+Finally `/proc/` is used to get the process details.
 
 The script requires only Python and does not depend on any external packages.
 Since it directly accesses the `cgroup` and `proc` filesystems, it works only on Linux hosts where `kind` is executed and is not compatible with MacOS.
 
-## Usage
 
 ```
 usage: kindps [-h] [-o {tabular,json}] [--debug] [-v] docker_filter [pod_filter]
@@ -31,13 +30,13 @@ options:
 
 ## Installation
 
-The script can either downloaded and executed directly or installed as a Python package:
+Either download [`kindps.py`](kindps.py) or install as a Python package:
 
 ```
 pip install kindps
 ```
 
-## Example
+## Example usage
 
 First, list the nodes in the Kind cluster:
 
@@ -93,9 +92,13 @@ Containers:
       app: envoy
       controller-revision-hash: dd8c68b4b
       pod-template-generation: 1
+
+Summary:
+  Containers: 2
+  Processes:  2
 ```
 
-You can also print it in JSON format by using the `--output json` option:
+To get JSON format output, include the `--output json` option:
 
 ```json
 [
@@ -139,7 +142,7 @@ You can also print it in JSON format by using the `--output json` option:
 ```
 
 The PIDs listed are the host PIDs for the processes running inside the containers.
-You can use these PIDs on the host:
+These PIDs can be used on the host to access the process:
 
 ```console
 $ ps 2367787
@@ -148,7 +151,7 @@ $ ps 2367787
                              --service-node envoy-z5lp9 --log-level info
 ```
 
-Now, you can use the PID to access the root filesystem of the container from the host.
+For example, to access the root filesystem of the container:
 
 ```console
 $ sudo ls /proc/2367787/root/
@@ -158,13 +161,13 @@ boot   docker-entrypoint.sh  lib32  mnt     product_uuid  srv   var
 certs  etc                   lib64  opt     root          sys
 ```
 
-Or you can send signals to the process even if the container would not have the `kill` command:
+To send a signal to the process, even if the container lacks the `kill` command:
 
 ```console
 $ sudo kill -STOP 2367787
 ```
 
-Or you can use `nsenter` to enter the network namespace of the process to run `wireshark`:
+Alternatively, `nsenter` can be used to enter the network namespace of the process to run `wireshark`:
 
 ```console
 $ sudo nsenter \
